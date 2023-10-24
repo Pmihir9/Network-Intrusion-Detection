@@ -1,0 +1,429 @@
+import findspark
+findspark.init()
+
+import pyspark
+import pandas as pd
+import numpy as np
+
+from matplotlib import pyplot as plt
+%matplotlib inline
+import seaborn as sns
+
+from pyspark.sql import Row
+from pyspark.sql import SQLContext
+from pyspark.sql.functions import *
+import pyspark.sql.functions as F
+from pyspark.sql.types import IntegerType, FloatType
+
+from pyspark.ml.linalg import Vectors
+from pyspark.ml import Pipeline
+from pyspark.ml.feature import VectorAssembler, StringIndexer, Bucketizer
+
+from pyspark import SparkContext
+
+from pyspark.mllib.evaluation import BinaryClassificationMetrics, MulticlassMetrics, BinaryClassificationMetrics
+
+from pyspark.ml.classification import RandomForestClassifier, DecisionTreeClassifier, NaiveBayes, LogisticRegression
+from pyspark.ml.tuning import ParamGridBuilder, CrossValidator
+from pyspark.ml.evaluation import BinaryClassificationEvaluator, RegressionEvaluator, MulticlassClassificationEvaluator
+from pyspark.ml.regression import RandomForestRegressor
+
+from pyspark.sql import SparkSession
+spark = SparkSession.builder.config("spark.logLevel", "WARN").getOrCreate()
+spark
+
+df = spark.read.format("csv").option("header", True).load("/Users/nayeonkim/Downloads/UNSW_NB15_training-set.csv")
+
+df.show()
+
+df.printSchema()
+
+data = df
+
+df.groupBy('state').count().show()
+
+df.groupBy('proto').count().show()
+
+df.groupBy('attack_cat').count().show()
+
+Scatter plot
+
+# Convert "sbytes" and "dbytes" columns to integers
+df = df.withColumn('sbytes', col('sbytes').cast(IntegerType()))
+df = df.withColumn('dbytes', col('dbytes').cast(IntegerType()))
+
+# Convert DataFrame to Pandas for visualization
+df_pd = df.toPandas()
+
+# Scatter plot: "sbytes" vs. "dbytes"
+plt.scatter(df_pd["sbytes"], df_pd["dbytes"], color='green', alpha=0.5)
+plt.xlabel("Source Bytes")
+plt.ylabel("Destination Bytes")
+plt.title("Scatter Plot: Source Bytes vs. Destination Bytes")
+plt.show()
+
+Box Plot:
+A box plot (also known as a box-and-whisker plot) can provide insights into the distribution of data and identify potential outliers.
+
+# Box plot: "sbytes" and "dbytes"
+plt.figure(figsize=(8, 6))
+sns.boxplot(x='attack_cat', y='sbytes', data=df_pd)
+plt.xticks(rotation=45)
+plt.xlabel("Attack Category")
+plt.ylabel("Source Bytes")
+plt.title("Box Plot: Source Bytes by Attack Category")
+plt.show()
+
+Pair Plot:
+The pair plot shows the relationships between pairs of numerical features ("sbytes", "dbytes", "sinpkt", "dinpkt", "dur", "rate") colored by "attack_cat" category. It helps visualize correlations between features and understand their distributions for different attack categories.
+
+# Pair plot of selected numerical features
+sns.pairplot(df_pd[['sbytes', 'dbytes', 'sinpkt', 'dinpkt', 'dur', 'rate', 'attack_cat']], hue='attack_cat')
+plt.suptitle("Pair Plot of Numerical Features by Attack Category", y=1.02)
+plt.show()
+
+# Group data by attack category and count occurrences
+attack_counts = df_pd['attack_cat'].value_counts()
+
+# Create a bar plot to visualize attack frequencies
+plt.figure(figsize=(12, 6))
+sns.barplot(x=attack_counts.index, y=attack_counts.values)
+plt.xticks(rotation=45)
+plt.xlabel("Attack Category")
+plt.ylabel("Frequency")
+plt.title("Frequency of Each Cyberattack Category")
+plt.tight_layout()
+plt.show()
+
+
+# Convert "dur" column to numeric type
+df_pd['dur'] = pd.to_numeric(df_pd['dur'], errors='coerce')
+
+# Create a box plot to visualize attack categories by duration
+plt.figure(figsize=(12, 6))
+sns.boxplot(x='attack_cat', y='dur', data=df_pd)
+plt.xticks(rotation=45)
+plt.xlabel("Attack Category")
+plt.ylabel("Duration")
+plt.title("Attack Categories by Duration")
+plt.tight_layout()
+plt.show()
+
+
+indexer = StringIndexer(inputCol="state", outputCol="state_idx")
+indexed = indexer.fit(df).transform(df)
+indexed.show()
+
+df = indexed
+
+indexer = StringIndexer(inputCol="proto", outputCol="proto_idx")
+indexed = indexer.fit(df).transform(df)
+indexed.show()
+
+df = indexed
+
+# Define custom indexing
+def custom_indexer(value):
+    if value == 'Normal':
+        return 0
+    else:
+        return 1
+
+# Create a User Defined Function (UDF) for custom indexing
+custom_indexer_udf = udf(custom_indexer, IntegerType())
+
+# Apply custom indexing
+indexed = df.withColumn("attack_idx", custom_indexer_udf(df["attack_cat"]))
+
+# Show the indexed DataFrame
+indexed.show()
+
+df = indexed
+
+columns_to_drop = ['state', 'attack_cat', 'proto']
+df = df.drop(*columns_to_drop)
+
+df.show()
+
+df.groupBy('service').count().show()
+
+indexer = StringIndexer(inputCol="service", outputCol="service_idx")
+indexed = indexer.fit(df).transform(df)
+indexed.show()
+
+df = indexed
+
+df = df.drop('service')
+
+df.show()
+
+df = df.drop('attack_idx')
+
+df.show()
+
+from pyspark.sql.types import DoubleType
+
+df = df.withColumn('dur', col('dur').cast('float'))
+
+df = df.withColumn('rate', col('dur').cast('float'))
+
+df = df.withColumn('sinpkt', col('sinpkt').cast('float'))
+
+cols = df.schema.names
+
+for c in cols:
+    if str(df.schema[c].dataType) == 'StringType()':
+        df = df.withColumn(c, col(c).cast('int'))
+
+df.printSchema()
+
+df.show()
+
+from pyspark.sql.functions import col, count, isnan, when
+df.select([count(when(col(c).isNull(), c)).alias(c) for c in df.columns]).show()
+
+df = df.na.drop('any')
+
+# Check if there is any NULL values. If yes, remove them
+from pyspark.sql.functions import col, count, isnan, when
+df.select([count(when(col(c).isNull(), c)).alias(c) for c in df.columns]).show()
+
+features = df.drop('label')
+
+colName = features.columns
+featuresRDD = features.rdd
+featuresRDD.collect()
+
+featuresRDD = features.rdd.map(lambda row: row[0:])
+featuresRDD.collect()
+
+from pyspark.mllib.stat import Statistics
+
+summary = Statistics.colStats(featuresRDD)
+print(summary.mean())
+print(summary.variance())
+print(summary.numNonzeros())
+print(summary.normL1())
+
+corrMat = Statistics.corr(featuresRDD, method = 'pearson')
+corrDf = pd.DataFrame(corrMat)
+corrDf.index, corrDf.columns = colName, colName
+
+corrDf.columns
+corrDf.index
+corrDf
+
+df = df.distinct()
+
+df.show()
+
+from pyspark.ml.regression import LinearRegression
+from pyspark.mllib.evaluation import RegressionMetrics
+
+from pyspark.ml.tuning import ParamGridBuilder, CrossValidator, CrossValidatorModel
+from pyspark.ml.feature import VectorAssembler, StandardScaler
+from pyspark.ml.evaluation import RegressionEvaluator
+
+cols = df.columns
+cols.remove('label')
+cols
+
+from pyspark.ml.feature import VectorAssembler
+
+va = VectorAssembler(inputCols = cols, outputCol = "features")
+va_df = va.transform(df)
+va_df.show()
+
+from pyspark.ml.feature import StandardScaler
+
+
+standardScaler = StandardScaler(inputCol="features", outputCol="features_scaled", withStd=True, withMean=False)
+
+scaled_df = standardScaler.fit(va_df).transform(va_df)
+
+scaled_df.select("features", "features_scaled").show(10, truncate=False)
+
+scaled_df.show()
+
+scaled_df.count()
+
+train_data, test_data = scaled_df.randomSplit([.8,.2], seed=10)
+
+scaled_df
+
+from pyspark.ml.classification import LogisticRegression
+from pyspark.ml.evaluation import BinaryClassificationEvaluator
+
+lr = LogisticRegression(featuresCol='features_scaled', labelCol="label",
+                        maxIter=20, regParam=0.3, elasticNetParam=0.8, standardization=False)
+lr_model = lr.fit(train_data)
+lr_predictions = lr_model.transform(test_data)
+
+# Use the correct labelCol and rawPredictionCol parameters for BinaryClassificationEvaluator
+lr_evaluator = BinaryClassificationEvaluator(rawPredictionCol="rawPrediction", labelCol="label")
+lr_accuracy = lr_evaluator.evaluate(lr_predictions)
+
+print("Logistic Regression Accuracy: {}".format(lr_accuracy))
+
+
+from pyspark.ml.classification import LogisticRegression
+from pyspark.ml.evaluation import BinaryClassificationEvaluator
+from pyspark.ml.tuning import ParamGridBuilder, TrainValidationSplit
+
+lr = LogisticRegression(featuresCol='features_scaled', labelCol="label", predictionCol='rawPrediction',
+                        maxIter=50, regParam=0.3, elasticNetParam=0.8, standardization=False)
+
+# Define the parameter grid for tuning
+param_grid = ParamGridBuilder() \
+    .addGrid(lr.regParam, [0.3, 0.5]) \
+    .addGrid(lr.elasticNetParam, [0.6, 0.8, 1.0]) \
+    .build()
+
+# Create a BinaryClassificationEvaluator
+# Create a BinaryClassificationEvaluator
+lr_evaluator = BinaryClassificationEvaluator(rawPredictionCol="rawPrediction", labelCol="label")
+
+# Iterate through the parameter grid and tune the model
+best_accuracy = 0.0
+best_lr_model = None
+
+for params in param_grid:
+    tuned_lr = LogisticRegression(featuresCol="features_scaled", labelCol="label", regParam=params[lr.regParam],
+                                  elasticNetParam=params[lr.elasticNetParam])
+
+    tuned_lr_model = tuned_lr.fit(train_data)
+    tuned_lr_predictions = tuned_lr_model.transform(test_data)
+    tuned_accuracy = lr_evaluator.evaluate(tuned_lr_predictions)
+
+    if tuned_accuracy > best_accuracy:
+        best_accuracy = tuned_accuracy
+        best_lr_model = tuned_lr_model
+
+print("Best Logistic Regression Accuracy: {}".format(best_accuracy))
+
+
+from pyspark.ml.classification import LinearSVC
+
+
+lsvc = LinearSVC(featuresCol="features_scaled", labelCol="label", maxIter=50, regParam = 0.0001)
+lsvc_model = lsvc.fit(train_data)
+lsvc_predictions = lsvc_model.transform(test_data)
+lsvc_evaluator = BinaryClassificationEvaluator(rawPredictionCol="rawPrediction", labelCol="label")
+lsvc_accuracy = lsvc_evaluator.evaluate(lsvc_predictions)
+print("Linear SVC Accuracy: {}".format(lsvc_accuracy))
+
+from pyspark.ml.classification import LinearSVC
+from pyspark.ml.evaluation import BinaryClassificationEvaluator
+from pyspark.ml.tuning import ParamGridBuilder
+
+lsvc = LinearSVC(featuresCol="features_scaled", labelCol="label", maxIter=50, regParam=0.0001)
+
+# Train the LinearSVC model
+lsvc_model = lsvc.fit(train_data)
+
+# Make predictions
+lsvc_predictions = lsvc_model.transform(test_data)
+
+# Create a BinaryClassificationEvaluator
+lsvc_evaluator = BinaryClassificationEvaluator(rawPredictionCol="rawPrediction", labelCol="label")
+
+# Evaluate the model with the initial parameters
+lsvc_accuracy = lsvc_evaluator.evaluate(lsvc_predictions)
+print("Linear SVC Accuracy (Initial): {}".format(lsvc_accuracy))
+
+# Define a grid of hyperparameters to tune
+param_grid = ParamGridBuilder() \
+    .addGrid(lsvc.maxIter, [50, 100, 150]) \
+    .addGrid(lsvc.regParam, [0.0001, 0.001, 0.01]) \
+    .build()
+
+# Iterate through the parameter grid and tune the model
+best_accuracy = 0.0
+best_lsvc_model = None
+
+for params in param_grid:
+    tuned_lsvc = LinearSVC(featuresCol="features_scaled", labelCol="label", maxIter=params[lsvc.maxIter], regParam=params[lsvc.regParam])
+    tuned_lsvc_model = tuned_lsvc.fit(train_data)
+    tuned_lsvc_predictions = tuned_lsvc_model.transform(test_data)
+    tuned_accuracy = lsvc_evaluator.evaluate(tuned_lsvc_predictions)
+
+    if tuned_accuracy > best_accuracy:
+        best_accuracy = tuned_accuracy
+        best_lsvc_model = tuned_lsvc_model
+
+print("Best Linear SVC Model:")
+print("Max Iterations:", best_lsvc_model.getMaxIter())
+print("Reg Param:", best_lsvc_model.getRegParam())
+print("Best Accuracy:", best_accuracy)
+
+
+import warnings
+warnings.filterwarnings(action='ignore')
+
+from pyspark.ml.classification import RandomForestClassifier
+from pyspark.ml.evaluation import BinaryClassificationEvaluator
+
+# Create a RandomForestClassifier
+rf = RandomForestClassifier(featuresCol="features_scaled", labelCol="label", numTrees=10, maxDepth=10)
+
+# Train the Random Forest model
+rf_model = rf.fit(train_data)
+
+# Make predictions
+rf_predictions = rf_model.transform(test_data)
+
+# Create a BinaryClassificationEvaluator for Random Forest
+rf_evaluator = BinaryClassificationEvaluator(rawPredictionCol="rawPrediction", labelCol="label")
+
+# Evaluate the Random Forest model
+rf_accuracy = rf_evaluator.evaluate(rf_predictions)
+
+print("Random Forest Accuracy: {}".format(rf_accuracy))
+
+
+
+from pyspark.ml.classification import RandomForestClassifier
+from pyspark.ml.evaluation import BinaryClassificationEvaluator
+
+# Define the parameter values to be tuned
+num_trees_values = [50, 100, 150]
+max_depth_values = [5, 10, 15]
+
+best_accuracy = 0.0
+best_rf_model = None
+best_num_trees = None
+best_max_depth = None
+
+# Iterate through parameter combinations
+for num_trees in num_trees_values:
+    for max_depth in max_depth_values:
+        # Create a RandomForestClassifier
+        rf = RandomForestClassifier(featuresCol="features_scaled", labelCol="label", numTrees=num_trees, maxDepth=max_depth)
+
+        # Train the Random Forest model
+        rf_model = rf.fit(train_data)
+
+        # Make predictions
+        rf_predictions = rf_model.transform(test_data)
+
+        # Create a BinaryClassificationEvaluator for Random Forest
+        rf_evaluator = BinaryClassificationEvaluator(rawPredictionCol="rawPrediction", labelCol="label")
+
+        # Evaluate the Random Forest model
+        rf_accuracy = rf_evaluator.evaluate(rf_predictions)
+
+        # Check if this model is the best so far
+        if rf_accuracy > best_accuracy:
+            best_accuracy = rf_accuracy
+            best_rf_model = rf_model
+            best_num_trees = num_trees
+            best_max_depth = max_depth
+
+# Print the best model's information
+print("Best Random Forest Model:")
+print("Num Trees:", best_num_trees)
+print("Max Depth:", best_max_depth)
+print("Accuracy:", best_accuracy)
+
+
+Best model: randomforest
